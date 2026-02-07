@@ -2,7 +2,7 @@ import os
 from glob import glob
 from setuptools import setup
 
-package_name = 'isaac_ros_yolov8_pose'
+package_name = 'isaac_ros_gestures'
 
 setup(
     name=package_name,
@@ -19,13 +19,14 @@ setup(
     zip_safe=True,
     maintainer='user',
     maintainer_email='micah_baker@sfu.ca',
-    description='YOLOv8 Pose Estimation using TensorRT with Isaac ROS',
+    description='MediaPipe Handpose Estimation using TensorRT with Isaac ROS',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'yolov8_pose_decoder = isaac_ros_yolov8_pose.yolov8_pose_decoder:main',
-            'theta_uvc_src = isaac_ros_yolov8_pose.theta_uvc_src:main',
+            'theta_uvc_src = isaac_ros_gestures.theta_uvc_src:main',
+            'handpose_decoder = isaac_ros_gestures.handpose_decoder:main',
+            'tensor_visualizer = isaac_ros_gestures.tensor_visualizer:main',
         ],
     },
 )

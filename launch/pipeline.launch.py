@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-# Copyright 2024 Isaac ROS YOLOv8 Pose
-# SPDX-License-Identifier: MIT
 
-"""
-Launch file for YOLOv8 Pose Estimation Pipeline with Theta Camera.
-"""
+"""Launch file for Handpose Estimation Pipeline with Theta Camera."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -14,102 +10,124 @@ from launch_ros.descriptions import ComposableNode
 
 
 def generate_launch_description():
-    """Generate launch description for YOLOv8 Pose pipeline."""
+    """Generate launch description."""
     
-    # Declare launch arguments
+    # Launch arguments
+    model_file_path_arg = DeclareLaunchArgument(
+        'model_file_path',
+        default_value='/workspaces/isaac_ros-dev/models/handpose_nchw.onnx',
+        description='Path to the ONNX model file'
+    )
+
     engine_file_path_arg = DeclareLaunchArgument(
         'engine_file_path',
-        default_value='/workspaces/isaac_ros-dev/models/yolov8s-pose.plan',
-        description='Path to the TensorRT engine file (.plan)'
+        default_value='/workspaces/isaac_ros-dev/models/handpose_nchw.plan',
+        description='Path to the TensorRT engine file'
     )
     
     score_threshold_arg = DeclareLaunchArgument(
         'score_threshold',
-        default_value='0.25',
+        default_value='0.05',
         description='Minimum confidence score for detections'
     )
     
-    nms_threshold_arg = DeclareLaunchArgument(
-        'nms_threshold',
-        default_value='0.45',
-        description='IoU threshold for Non-Maximum Suppression'
-    )
-    
-    # Theta camera source node (GStreamer-based)
+    # Theta camera source
     theta_src_node = Node(
-        package='isaac_ros_yolov8_pose',
+        package='isaac_ros_gestures',
         executable='theta_uvc_src',
         name='theta_uvc_src',
-        remappings=[
-            ('image_raw', '/image_raw'),
-        ],
         parameters=[{
             'width': 1920,
-            'height': 1080,
-            'framerate': 30,
+            'height': 960,
             'frame_id': 'theta_camera',
-            'output_topic': 'image_raw',
         }],
         output='screen',
     )
     
-    # TensorRT inference node (ComposableNode for performance)
+    # DNN Image Encoder
+    encoder_node = ComposableNode(
+        name='dnn_image_encoder',
+        package='isaac_ros_dnn_image_encoder',
+        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
+        remappings=[
+            ('image', '/image_raw'),
+            ('encoded_tensor', '/tensor_pub'),
+        ],
+        parameters=[{
+            'input_image_width': 1920,
+            'input_image_height': 960,
+            'network_image_width': 224,
+            'network_image_height': 224,
+            'image_mean': [0.5, 0.5, 0.5],
+            'image_stddev': [0.5, 0.5, 0.5],
+            'num_blocks': 40,
+            'enable_padding': False,
+        }]
+    )
+    
+    # TensorRT inference
     tensorrt_node = ComposableNode(
         name='tensorrt_node',
         package='isaac_ros_tensor_rt',
         plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
         remappings=[
-            ('image', '/image_raw'),
-            ('tensor_pub', '/raw_tensor_output'),
+            ('tensor_pub', '/tensor_pub'),
+            ('tensor_sub', '/tensor_output'),
         ],
         parameters=[{
+            'model_file_path': LaunchConfiguration('model_file_path'),
             'engine_file_path': LaunchConfiguration('engine_file_path'),
-            'output_binding_names': ['output0'],
-            'output_tensor_names': ['output0'],
-            'input_tensor_names': ['images'],
-            'input_binding_names': ['images'],
+            'input_binding_names': ['input_tensor'],
+            'input_tensor_names': ['input_tensor'],
+            'output_binding_names': ['Identity', 'Identity_1', 'Identity_2', 'Identity_3'],
+            'output_tensor_names': ['landmarks', 'handedness', 'score', 'hand_presence'],
             'force_engine_update': False,
-            'verbose': False,
+            'verbose': True,
         }]
     )
     
-    # Container for composable nodes
-    tensorrt_container = ComposableNodeContainer(
-        name='tensorrt_container',
+    # Composable Node Container
+    inference_container = ComposableNodeContainer(
+        name='inference_container',
         namespace='',
         package='rclcpp_components',
         executable='component_container_mt',
-        composable_node_descriptions=[tensorrt_node],
+        composable_node_descriptions=[encoder_node, tensorrt_node],
         output='screen',
     )
     
-    # Custom Python decoder node
+    # Handpose decoder
     decoder_node = Node(
-        package='isaac_ros_yolov8_pose',
-        executable='yolov8_pose_decoder',
-        name='yolov8_pose_decoder',
+        package='isaac_ros_gestures',
+        executable='handpose_decoder',
+        name='handpose_decoder',
         remappings=[
-            ('tensor_pub', '/raw_tensor_output'),
-            ('pose_markers', '/pose_markers'),
+            ('tensor_output', '/tensor_output'),
         ],
         parameters=[{
             'score_threshold': LaunchConfiguration('score_threshold'),
-            'nms_threshold': LaunchConfiguration('nms_threshold'),
-            'num_keypoints': 17,
-            'input_width': 640,
-            'input_height': 640,
             'frame_id': 'theta_camera',
         }],
         output='screen',
     )
     
+    # Debug visualizer
+    visualizer_node = Node(
+        package='isaac_ros_gestures',
+        executable='tensor_visualizer',
+        name='tensor_visualizer',
+        remappings=[
+            ('tensor_pub', '/tensor_pub'),
+        ],
+        output='screen'
+    )
+
     return LaunchDescription([
-        # Launch arguments
+        model_file_path_arg,
         engine_file_path_arg,
         score_threshold_arg,
-        nms_threshold_arg,
-        # Nodes - Theta camera source first, then inference pipeline
         theta_src_node,
-        tensorrt_container,
+        inference_container,
         decoder_node,
+        visualizer_node
     ])

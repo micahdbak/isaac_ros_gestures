@@ -1,0 +1,46 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update || true
+
+RUN apt-get install -y \
+    python3-gst-1.0 \
+    gir1.2-gstreamer-1.0 \
+    libgstreamer1.0-0 \
+    libgstreamer1.0-dev \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    gstreamer1.0-tools \
+    gstreamer1.0-x \
+    gstreamer1.0-alsa \
+    gstreamer1.0-gl \
+    gstreamer1.0-gtk3 \
+    libgstreamer-plugins-base1.0-dev \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    libusb-1.0-0-dev \
+    libjpeg-dev
+
+RUN git clone https://github.com/nickel110/libuvc.git /tmp/libuvc && \
+    cd /tmp/libuvc && \
+    mkdir build && cd build && \
+    cmake .. && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    rm -rf /tmp/libuvc
+
+RUN git clone https://github.com/nickel110/gstthetauvc.git /tmp/gstthetauvc && \
+    cd /tmp/gstthetauvc/thetauvc && \
+    make && \
+    cp gstthetauvc.so /usr/lib/$(uname -m)-linux-gnu/gstreamer-1.0/ && \
+    rm -rf /tmp/gstthetauvc
+
+RUN gst-inspect-1.0 thetauvcsrc || echo "Warning: thetauvcsrc not found, may need GST_PLUGIN_PATH"
