@@ -68,7 +68,7 @@ Visualization Manager:
         Value: /pose_markers
       Name: MarkerArray
       Namespaces:
-        {}
+        hand_keypoints: true
       Value: true
   Enabled: true
   Global Options:

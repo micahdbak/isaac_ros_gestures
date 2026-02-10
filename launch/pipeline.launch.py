@@ -51,7 +51,7 @@ def generate_launch_description():
         plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
         remappings=[
             ('image', '/image_raw'),
-            ('encoded_tensor', '/tensor_pub'),
+            ('encoded_tensor', '/tensor_view'),
         ],
         parameters=[{
             'input_image_width': 1920,
@@ -71,7 +71,7 @@ def generate_launch_description():
         package='isaac_ros_tensor_rt',
         plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
         remappings=[
-            ('tensor_pub', '/tensor_pub'),
+            ('tensor_pub', '/tensor_view'),
             ('tensor_sub', '/tensor_output'),
         ],
         parameters=[{

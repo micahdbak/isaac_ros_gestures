@@ -13,13 +13,13 @@ class TensorVisualizer(Node):
         # Subs/Pubs
         self.tensor_sub = self.create_subscription(
             TensorList,
-            'tensor_pub',
+            'tensor_view',
             self.tensor_callback,
             10
         )
         self.image_pub = self.create_publisher(
             Image,
-            'tensor_view',
+            'tensor_view_image',
             10
         )
 

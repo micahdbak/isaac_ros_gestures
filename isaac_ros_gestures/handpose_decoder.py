@@ -86,6 +86,8 @@ class HandposeDecoder(Node):
         # Locate tensors
         landmarks_tensor = None
         score_tensor = None
+
+        #self.get_logger().info(f'{msg.tensors}')
         
         for tensor in msg.tensors:
             if tensor.name == 'landmarks':
@@ -202,6 +204,10 @@ class HandposeDecoder(Node):
                 y_val *= scale_inv_h
                 z_val *= scale_inv_w
             
+            # Center coordinates (0,0 is center of frame)
+            x_val -= 0.5
+            y_val -= 0.5
+            
             # Z offset
             z_offset = 1.0
             point = Point(x=x_val, y=y_val, z=z_val + z_offset)
@@ -252,6 +258,10 @@ class HandposeDecoder(Node):
                     x_val *= scale_inv_w
                     y_val *= scale_inv_h
                     z_val *= scale_inv_w 
+                
+                # Center coordinates (0,0 is center of frame)
+                x_val -= 0.5
+                y_val -= 0.5 
                 
                 z_offset = 1.0
                 pose.position.x = x_val
