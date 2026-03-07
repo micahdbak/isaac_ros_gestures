@@ -66,22 +66,10 @@ class HandposeDecoder(Node):
             10
         )
 
-        # Raw keypoint poses
-        self.pose_pub = self.create_publisher(
-            PoseArray,
-            'hand_poses',
-            10
-        )
-
     def tensor_callback(self, msg: TensorList):
         """Process incoming tensor data."""
         if len(msg.tensors) == 0:
             return
-        
-        # Log inference start once
-        if not hasattr(self, '_first_tensor_received'):
-            self.get_logger().info('INFERENCE RUNNING')
-            self._first_tensor_received = True
 
         # Locate tensors
         landmarks_tensor = None
@@ -126,7 +114,6 @@ class HandposeDecoder(Node):
         # Decode and publish
         hands = self.decode_predictions(landmarks_data, score_data)
         self.publish_markers(hands, msg.header)
-        self.publish_poses(hands, msg.header)
 
     def decode_predictions(self, landmarks_tensor: np.ndarray, score_tensor: np.ndarray = None) -> list:
         """Decode predictions from tensors."""
@@ -233,44 +220,6 @@ class HandposeDecoder(Node):
             return ColorRGBA(r=0.0, g=1.0, b=0.4, a=1.0)
         else:
             return ColorRGBA(r=0.4, g=0.6, b=1.0, a=1.0)
-
-    def publish_poses(self, hands: list, header):
-        """Publish keypoint poses."""
-        pose_array = PoseArray()
-        pose_array.header = header
-        pose_array.header.frame_id = self.frame_id
-        
-        for hand in hands:
-            keypoints = hand['keypoints']
-            
-            for kp in keypoints:
-                pose = Pose()
-                x_val = float(kp[0])
-                y_val = float(kp[1])
-                z_val = float(kp[2]) if len(kp) > 2 else 0.0
-                
-                # Normalize if coordinates are pixels
-                scale_inv_w = 1.0
-                scale_inv_h = 1.0
-                if abs(x_val) > 1.0 or abs(y_val) > 1.0:
-                    scale_inv_w = 1.0 / self.input_width
-                    scale_inv_h = 1.0 / self.input_height
-                    x_val *= scale_inv_w
-                    y_val *= scale_inv_h
-                    z_val *= scale_inv_w 
-                
-                # Center coordinates (0,0 is center of frame)
-                x_val -= 0.5
-                y_val -= 0.5 
-                
-                z_offset = 1.0
-                pose.position.x = x_val
-                pose.position.y = y_val
-                pose.position.z = z_val + z_offset
-                pose.orientation.w = 1.0
-                pose_array.poses.append(pose)
-        
-        self.pose_pub.publish(pose_array)
 
 
 def main(args=None):

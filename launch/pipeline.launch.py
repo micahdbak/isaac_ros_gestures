@@ -24,6 +24,12 @@ def generate_launch_description():
         default_value='/workspaces/isaac_ros-dev/models/handpose_nchw.plan',
         description='Path to the TensorRT engine file'
     )
+
+    palm_model_file_path_arg = DeclareLaunchArgument(
+        'palm_model_file_path',
+        default_value='/workspaces/isaac_ros-dev/src/isaac_ros_gestures/palm_detection_mediapipe_2023feb.onnx',
+        description='Path to the Palm Detection ONNX model file'
+    )
     
     score_threshold_arg = DeclareLaunchArgument(
         'score_threshold',
@@ -32,16 +38,45 @@ def generate_launch_description():
     )
     
     # Theta camera source
-    theta_src_node = Node(
+    # theta_src_node = Node(
+    #     package='isaac_ros_gestures',
+    #     executable='theta_uvc_src',
+    #     name='theta_uvc_src',
+    #     parameters=[{
+    #         'width': 1920,
+    #         'height': 960,
+    #         'frame_id': 'theta_camera',
+    #     }],
+    #     output='screen',
+    # )
+    
+    # Video file test source (hot-swappable with theta_src_node)
+    video_tester_node = Node(
         package='isaac_ros_gestures',
-        executable='theta_uvc_src',
-        name='theta_uvc_src',
+        executable='video_tester_node',
+        name='video_tester_node',
         parameters=[{
             'width': 1920,
             'height': 960,
             'frame_id': 'theta_camera',
+            'video_path': '/workspaces/isaac_ros-dev/test_video.mp4',
         }],
         output='screen',
+    )
+    
+    # Palm Detector (Mid-step for cropping)
+    palm_detector_node = Node(
+        package='isaac_ros_gestures',
+        executable='palm_detector_node',
+        name='palm_detector_node',
+        remappings=[
+            ('image_raw', '/image_raw'),
+            ('image_cropped', '/image_cropped'),
+        ],
+        parameters=[{
+            'model_path': LaunchConfiguration('palm_model_file_path'),
+        }],
+        output='screen'
     )
     
     # DNN Image Encoder
@@ -50,12 +85,12 @@ def generate_launch_description():
         package='isaac_ros_dnn_image_encoder',
         plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
         remappings=[
-            ('image', '/image_raw'),
+            ('image', '/image_cropped'),
             ('encoded_tensor', '/tensor_view'),
         ],
         parameters=[{
-            'input_image_width': 1920,
-            'input_image_height': 960,
+            'input_image_width': 224,
+            'input_image_height': 224,
             'network_image_width': 224,
             'network_image_height': 224,
             'image_mean': [0.5, 0.5, 0.5],
@@ -111,23 +146,27 @@ def generate_launch_description():
         output='screen',
     )
     
-    # Debug visualizer
-    visualizer_node = Node(
-        package='isaac_ros_gestures',
-        executable='tensor_visualizer',
-        name='tensor_visualizer',
-        remappings=[
-            ('tensor_pub', '/tensor_pub'),
-        ],
+    # Static TF Publisher (map -> theta_camera) for RViz
+    static_tf_node = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_publisher',
+        arguments=['0', '0', '0', '0', '0', '0', 'map', 'theta_camera'],
         output='screen'
     )
 
     return LaunchDescription([
         model_file_path_arg,
         engine_file_path_arg,
+        palm_model_file_path_arg,
         score_threshold_arg,
-        theta_src_node,
+        
+        # Uncomment video_tester_node and comment theta_src_node to swap
+        # theta_src_node,
+        video_tester_node,
+        
+        palm_detector_node,
         inference_container,
         decoder_node,
-        visualizer_node
+        static_tf_node
     ])
