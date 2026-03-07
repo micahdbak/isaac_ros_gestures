@@ -6,6 +6,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from isaac_ros_tensor_list_interfaces.msg import TensorList
+from sensor_msgs.msg import CameraInfo
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point, PoseArray, Pose
@@ -41,15 +42,25 @@ class HandposeDecoder(Node):
         # Parameters
         self.declare_parameter('score_threshold', 0.25)
         self.declare_parameter('num_keypoints', 21)
-        self.declare_parameter('input_width', 224)
-        self.declare_parameter('input_height', 224)
+        self.declare_parameter('image_width', 1920.0)
+        self.declare_parameter('image_height', 960.0)
         self.declare_parameter('frame_id', 'camera_link')
         
         self.score_threshold = self.get_parameter('score_threshold').value
         self.num_keypoints = self.get_parameter('num_keypoints').value
-        self.input_width = self.get_parameter('input_width').value
-        self.input_height = self.get_parameter('input_height').value
+        self.image_width = self.get_parameter('image_width').value
+        self.image_height = self.get_parameter('image_height').value
         self.frame_id = self.get_parameter('frame_id').value
+        
+        self.roi_cache = {}
+        
+        # Subscribe to CameraInfo to track the bounding box (which contains our ROI and a Header)
+        self.roi_sub = self.create_subscription(
+            CameraInfo,
+            'palm_roi',
+            self.roi_callback,
+            10
+        )
         
         # Wrapper for TensorRT output
         self.tensor_sub = self.create_subscription(
@@ -65,6 +76,11 @@ class HandposeDecoder(Node):
             'pose_markers',
             10
         )
+
+    def roi_callback(self, msg: CameraInfo):
+        """Cache incoming Regions of Interest by timestamp."""
+        key = (msg.header.stamp.sec, msg.header.stamp.nanosec)
+        self.roi_cache[key] = msg.roi
 
     def tensor_callback(self, msg: TensorList):
         """Process incoming tensor data."""
@@ -113,7 +129,19 @@ class HandposeDecoder(Node):
 
         # Decode and publish
         hands = self.decode_predictions(landmarks_data, score_data)
-        self.publish_markers(hands, msg.header)
+        
+        # Match ROI
+        key = (msg.header.stamp.sec, msg.header.stamp.nanosec)
+        matched_roi = self.roi_cache.get(key)
+        
+        # Memory constraint: Clean up the cache, explicitly dropping all older or matched ROIs
+        current_time = key[0] * 1e9 + key[1]
+        self.roi_cache = {
+            k: v for k, v in self.roi_cache.items()
+            if (k[0] * 1e9 + k[1]) > current_time
+        }
+        
+        self.publish_markers(hands, msg.header, matched_roi)
 
     def decode_predictions(self, landmarks_tensor: np.ndarray, score_tensor: np.ndarray = None) -> list:
         """Decode predictions from tensors."""
@@ -138,7 +166,7 @@ class HandposeDecoder(Node):
             'confidence': confidence
         }]
 
-    def publish_markers(self, hands: list, header):
+    def publish_markers(self, hands: list, header, roi):
         """Publish visualization markers."""
         marker_array = MarkerArray()
         
@@ -154,14 +182,14 @@ class HandposeDecoder(Node):
             confidence = hand['confidence']
             
             joints_marker = self.create_joints_marker(
-                keypoints, hand_idx, header, confidence
+                keypoints, hand_idx, header, confidence, roi
             )
             marker_array.markers.append(joints_marker)
         
         self.marker_pub.publish(marker_array)
 
     def create_joints_marker(
-        self, keypoints: np.ndarray, hand_idx: int, header, confidence: float
+        self, keypoints: np.ndarray, hand_idx: int, header, confidence: float, roi
     ) -> Marker:
         """Create Marker for hand keypoints."""
         marker = Marker()
@@ -176,24 +204,39 @@ class HandposeDecoder(Node):
         marker.scale.x = 0.02
         marker.scale.y = 0.02
         
+        # Base DNN crop dimension
+        dnn_dim = 224.0
+        
         for kp_idx, kp in enumerate(keypoints):
             x_val = float(kp[0])
             y_val = float(kp[1])
             z_val = float(kp[2]) if len(kp) > 2 else 0.0
             
-            # Normalize if coordinates are pixels
-            scale_inv_w = 1.0
-            scale_inv_h = 1.0
-            if abs(x_val) > 1.0 or abs(y_val) > 1.0:
-                scale_inv_w = 1.0 / self.input_width
-                scale_inv_h = 1.0 / self.input_height
-                x_val *= scale_inv_w
-                y_val *= scale_inv_h
-                z_val *= scale_inv_w
+            pct_x = x_val
+            pct_y = y_val
+            pct_z = z_val
             
-            # Center coordinates (0,0 is center of frame)
-            x_val -= 0.5
-            y_val -= 0.5
+            # The model often outputs literal [0, 224] pixel coordinates!
+            if abs(x_val) > 1.0 or abs(y_val) > 1.0:
+                pct_x /= dnn_dim
+                pct_y /= dnn_dim
+                pct_z /= dnn_dim
+            
+            if roi is not None:
+                # Calculate absolute pixel coordinates relative to the full image
+                abs_x = roi.x_offset + pct_x * roi.width
+                abs_y = roi.y_offset + pct_y * roi.height
+                
+                # Transform directly into a [-1, 1] space where 0,0 is the center of the total image
+                x_val = (abs_x / self.image_width) * 2.0 - 1.0
+                y_val = (abs_y / self.image_height) * 2.0 - 1.0
+                
+                # Scale Z equivalently to maintain spatial proportions
+                z_val = pct_z * (roi.width / self.image_width)
+            else:
+                x_val = pct_x * 2.0 - 1.0
+                y_val = pct_y * 2.0 - 1.0
+                z_val = pct_z
             
             # Z offset
             z_offset = 1.0

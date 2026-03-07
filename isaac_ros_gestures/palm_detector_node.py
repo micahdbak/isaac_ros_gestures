@@ -7,7 +7,7 @@ import cv2 as cv
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 
 # Import the provided MPPalmDet class
@@ -44,8 +44,9 @@ class PalmDetectorNode(Node):
             targetId=cv.dnn.DNN_TARGET_CPU
         )
         
-        # Publisher for cropped image
+        # Publisher for cropped image and ROI
         self.image_pub = self.create_publisher(Image, 'image_cropped', 1)
+        self.roi_pub = self.create_publisher(CameraInfo, 'palm_roi', 1)
         
         # Subscriber to raw image with depth=1 to drop old frames
         self.image_sub = self.create_subscription(
@@ -122,8 +123,18 @@ class PalmDetectorNode(Node):
             cropped_msg = self.bridge.cv2_to_imgmsg(cropped_img_rgb, encoding='rgb8')
             cropped_msg.header = msg.header
             
+            # Create CameraInfo to hold the ROI and Header
+            roi_msg = CameraInfo()
+            roi_msg.header = msg.header
+            roi_msg.roi.x_offset = int(new_x1)
+            roi_msg.roi.y_offset = int(new_y1)
+            roi_msg.roi.height = int(new_y2 - new_y1)
+            roi_msg.roi.width = int(new_x2 - new_x1)
+            roi_msg.roi.do_rectify = False
+            
             # Publish
             self.image_pub.publish(cropped_msg)
+            self.roi_pub.publish(roi_msg)
             
         except Exception as e:
             self.get_logger().error(f"Error processing image: {e}")
