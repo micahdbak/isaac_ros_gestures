@@ -2,11 +2,11 @@
 """ThetaUvcSrc - ROS 2 node for Ricoh Theta camera via GStreamer."""
 
 import threading
-import time
 import rclpy
+import numpy as np
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from std_msgs.msg import Header
+from cv_bridge import CvBridge
 
 import gi
 gi.require_version('Gst', '1.0')
@@ -30,6 +30,8 @@ class ThetaUvcSrc(Node):
         
         # Publisher
         self.image_pub = self.create_publisher(Image, 'image_raw', 10)
+
+        self.bridge = CvBridge()
         
         # Initialize GStreamer
         Gst.init(None)
@@ -87,9 +89,9 @@ class ThetaUvcSrc(Node):
 
     def _capture_loop(self):
         """Background thread that pulls frames from GStreamer."""
+        bus = self.pipeline.get_bus()
         while self._running:
             # Check pipeline health
-            bus = self.pipeline.get_bus()
             msg = bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.EOS)
             if msg:
                 if msg.type == Gst.MessageType.ERROR:
@@ -122,18 +124,12 @@ class ThetaUvcSrc(Node):
                 continue
             
             try:
-                import time
-                import numpy as np
-                from cv_bridge import CvBridge
-                
-                bridge = CvBridge()
-                
                 # Use numpy for fast buffer access (zero-copy view)
                 np_array = np.frombuffer(map_info.data, dtype=np.uint8)
                 np_array = np_array.reshape((height, width, 3))
                 
                 # Use cv_bridge to convert to ROS message (optimized)
-                msg = bridge.cv2_to_imgmsg(np_array, encoding='rgb8')
+                msg = self.bridge.cv2_to_imgmsg(np_array, encoding='rgb8')
                 msg.header.stamp = self.get_clock().now().to_msg()
                 msg.header.frame_id = self.frame_id
                 
