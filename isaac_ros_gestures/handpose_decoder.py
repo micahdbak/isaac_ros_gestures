@@ -1,269 +1,214 @@
 #!/usr/bin/env python3
 
-"""Handpose Decoder Node for parsing MediaPipe output and publishing visualization."""
-
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from isaac_ros_tensor_list_interfaces.msg import TensorList
-from sensor_msgs.msg import CameraInfo
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
-from geometry_msgs.msg import Point, PoseArray, Pose
+from geometry_msgs.msg import Point
+from sensor_msgs.msg import CameraInfo
+from typing import Optional, Tuple, Dict
 
-
-# MediaPipe Hand Keypoint Names
 HAND_KEYPOINT_NAMES = [
-    'WRIST',
-    'THUMB_CMC', 'THUMB_MCP', 'THUMB_IP', 'THUMB_TIP',
-    'INDEX_FINGER_MCP', 'INDEX_FINGER_PIP', 'INDEX_FINGER_DIP', 'INDEX_FINGER_TIP',
-    'MIDDLE_FINGER_MCP', 'MIDDLE_FINGER_PIP', 'MIDDLE_FINGER_DIP', 'MIDDLE_FINGER_TIP',
-    'RING_FINGER_MCP', 'RING_FINGER_PIP', 'RING_FINGER_DIP', 'RING_FINGER_TIP',
-    'PINKY_MCP', 'PINKY_PIP', 'PINKY_DIP', 'PINKY_TIP'
+    'wrist',
+    'thumb_cmc', 'thumb_mcp', 'thumb_ip', 'thumb_tip',
+    'index_mcp', 'index_pip', 'index_dip', 'index_tip',
+    'middle_mcp', 'middle_pip', 'middle_dip', 'middle_tip',
+    'ring_mcp', 'ring_pip', 'ring_dip', 'ring_tip',
+    'pinky_mcp', 'pinky_pip', 'pinky_dip', 'pinky_tip'
 ]
 
-# Finger Color Mapping
-FINGER_COLORS = {
-    'wrist': (0, 1),
-    'thumb': (1, 5),
-    'index': (5, 9),
-    'middle': (9, 13),
-    'ring': (13, 17),
-    'pinky': (17, 21),
-}
-
-
 class HandposeDecoder(Node):
-    """Decodes MediaPipe handpose tensors and publishes visualization markers."""
-
     def __init__(self):
         super().__init__('handpose_decoder')
         
-        # Parameters
         self.declare_parameter('score_threshold', 0.25)
-        self.declare_parameter('num_keypoints', 21)
-        self.declare_parameter('image_width', 1920.0)
-        self.declare_parameter('image_height', 960.0)
-        self.declare_parameter('frame_id', 'camera_link')
+        self.declare_parameter('network_size', 640.0)
+
+        # Coordinate frame for output markers:
+        # x/y in [-1, 1] relative to the *original* 960x960 crop of the source image.
+        # -1 is the left/top edge of that crop, +1 is the right/bottom edge.
+        self.declare_parameter('source_crop_size', 960.0)
+        # If the original source image is 1920x960 and you center-crop to 960x960,
+        # the crop origin is x=480, y=0 in the original image.
+        self.declare_parameter('source_crop_origin_x', 480.0)
+        self.declare_parameter('source_crop_origin_y', 0.0)
         
         self.score_threshold = self.get_parameter('score_threshold').value
-        self.num_keypoints = self.get_parameter('num_keypoints').value
-        self.image_width = self.get_parameter('image_width').value
-        self.image_height = self.get_parameter('image_height').value
-        self.frame_id = self.get_parameter('frame_id').value
-        
-        self.roi_cache = {}
-        
-        # Subscribe to CameraInfo to track the bounding box (which contains our ROI and a Header)
-        self.roi_sub = self.create_subscription(
-            CameraInfo,
-            'palm_roi',
-            self.roi_callback,
-            10
-        )
-        
-        # Wrapper for TensorRT output
+        self.network_size = self.get_parameter('network_size').value
+        self.source_crop_size = float(self.get_parameter('source_crop_size').value)
+        self.source_crop_origin_x = float(self.get_parameter('source_crop_origin_x').value)
+        self.source_crop_origin_y = float(self.get_parameter('source_crop_origin_y').value)
+
+        # Cache latest ROI (and a small timestamp map if TensorList carries headers).
+        self._last_roi: Optional[Tuple[float, float, float, float]] = None  # x,y,w,h in source image px
+        self._roi_cache: Dict[int, Tuple[float, float, float, float]] = {}
+
         self.tensor_sub = self.create_subscription(
             TensorList,
             'tensor_output',
             self.tensor_callback,
             10
         )
-        
-        # Visual markers
+
+        self.roi_sub = self.create_subscription(
+            CameraInfo,
+            'palm_roi',
+            self.roi_callback,
+            10
+        )
+
         self.marker_pub = self.create_publisher(
             MarkerArray,
             'pose_markers',
             10
         )
 
-    def roi_callback(self, msg: CameraInfo):
-        """Cache incoming Regions of Interest by timestamp."""
-        key = (msg.header.stamp.sec, msg.header.stamp.nanosec)
-        self.roi_cache[key] = msg.roi
+        # from sensor_msgs.msg import Image
+        # import cv2
+        # from cv_bridge import CvBridge
+        # self.cv2 = cv2
+        # self.bridge = CvBridge()
+        # self.current_image = None
+        # self.image_sub = self.create_subscription(
+        #     Image,
+        #     '/image_cropped',
+        #     self.image_callback,
+        #     10
+        # )
+    
+    # def image_callback(self, msg):
+    #     # Convert ROS Image to OpenCV
+    #     img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+    #     img = self.cv2.resize(img, (int(self.network_size), int(self.network_size)))
+    #     self.current_image = img
 
     def tensor_callback(self, msg: TensorList):
-        """Process incoming tensor data."""
         if len(msg.tensors) == 0:
+            print("no tensors bruh")
             return
 
-        # Locate tensors
-        landmarks_tensor = None
-        score_tensor = None
+        tensor = msg.tensors[0]
+        data = np.frombuffer(tensor.data, dtype=np.float32)
+        out = data.reshape(tuple(tensor.shape.dims))
+        pred = out[0] # (1,300,69) -> (300,69)
+        
+        conf = pred[:, 4]
+        best_idx = np.argmax(conf)
+        best_pred = pred[best_idx]
 
-        #self.get_logger().info(f'{msg.tensors}')
-        
-        for tensor in msg.tensors:
-            if tensor.name == 'landmarks':
-                landmarks_tensor = tensor
-            elif tensor.name == 'score':
-                score_tensor = tensor
-        
-        # Fallback to indices
-        if landmarks_tensor is None and len(msg.tensors) > 0:
-            landmarks_tensor = msg.tensors[0]
-        if score_tensor is None and len(msg.tensors) > 2:
-            score_tensor = msg.tensors[2]
-            
-        if landmarks_tensor is None:
+        if float(conf[best_idx]) < float(self.score_threshold):
+            # Nothing confident enough to visualize.
+            self.marker_pub.publish(MarkerArray())
             return
-            
-        # Parse landmarks
+
+        kpts = best_pred[6:].reshape(21, 3)
+        palm_roi = self._get_roi_for_tensorlist(msg)
+        self.publish_keypoints(kpts, palm_roi)
+
+    def _stamp_to_ns(self, stamp) -> Optional[int]:
         try:
-            landmarks_data = np.frombuffer(bytes(landmarks_tensor.data), dtype=np.float32)
-            landmarks_shape = tuple(d for d in landmarks_tensor.shape.dims)
-            landmarks_data = landmarks_data.reshape(landmarks_shape)
-        except Exception as e:
-            self.get_logger().error(f'Failed to parse landmarks: {e}')
+            return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+        except Exception:
+            return None
+
+    def roi_callback(self, msg: CameraInfo):
+        roi = msg.roi
+        if roi.width <= 0 or roi.height <= 0:
             return
 
-        # Parse score
-        score_data = None
-        if score_tensor:
-            try:
-                score_data = np.frombuffer(bytes(score_tensor.data), dtype=np.float32)
-                score_shape = tuple(d for d in score_tensor.shape.dims)
-                score_data = score_data.reshape(score_shape)
-            except Exception as e:
-                self.get_logger().error(f'Failed to parse score: {e}')
+        x = float(roi.x_offset)
+        y = float(roi.y_offset)
+        w = float(roi.width)
+        h = float(roi.height)
+        self._last_roi = (x, y, w, h)
 
-        # Decode and publish
-        hands = self.decode_predictions(landmarks_data, score_data)
-        
-        # Match ROI
-        key = (msg.header.stamp.sec, msg.header.stamp.nanosec)
-        matched_roi = self.roi_cache.get(key)
-        
-        # Memory constraint: Clean up the cache, explicitly dropping all older or matched ROIs
-        current_time = key[0] * 1e9 + key[1]
-        self.roi_cache = {
-            k: v for k, v in self.roi_cache.items()
-            if (k[0] * 1e9 + k[1]) > current_time
-        }
-        
-        self.publish_markers(hands, msg.header, matched_roi)
+        stamp_ns = self._stamp_to_ns(getattr(getattr(msg, 'header', None), 'stamp', None))
+        if stamp_ns is not None:
+            self._roi_cache[stamp_ns] = (x, y, w, h)
+            # prune cache to keep bounded
+            if len(self._roi_cache) > 60:
+                for key in sorted(self._roi_cache.keys())[:-60]:
+                    del self._roi_cache[key]
 
-    def decode_predictions(self, landmarks_tensor: np.ndarray, score_tensor: np.ndarray = None) -> list:
-        """Decode predictions from tensors."""
-        landmarks_tensor = np.squeeze(landmarks_tensor)
-        
-        keypoints = None
-        if landmarks_tensor.size == self.num_keypoints * 3:
-            keypoints = landmarks_tensor.reshape(self.num_keypoints, 3)
+    def _get_roi_for_tensorlist(self, msg: TensorList) -> Optional[Tuple[float, float, float, float]]:
+        stamp_ns = self._stamp_to_ns(getattr(getattr(msg, 'header', None), 'stamp', None))
+        if stamp_ns is not None and stamp_ns in self._roi_cache:
+            return self._roi_cache[stamp_ns]
+        return self._last_roi
+
+    def _kpt_to_crop_norm(self, x: float, y: float, roi_xywh: Optional[Tuple[float, float, float, float]]):
+        # Keypoints are predicted in the resized network input (e.g. 640x640) corresponding to the palm crop.
+        # Map to the original 960x960 source crop, then normalize to [-1, 1].
+        nx = float(x) / float(self.network_size)
+        ny = float(y) / float(self.network_size)
+
+        if roi_xywh is None:
+            # Best-effort fallback: treat network input as spanning the full 960x960 crop.
+            x_px = nx * self.source_crop_size
+            y_px = ny * self.source_crop_size
         else:
-            return []
-        
-        # Determine confidence
-        confidence = 0.0
-        if score_tensor is not None:
-             confidence = float(np.max(score_tensor))
-        
-        if confidence < self.score_threshold:
-            return []
-        
-        return [{
-            'keypoints': keypoints,
-            'confidence': confidence
-        }]
+            roi_x, roi_y, roi_w, roi_h = roi_xywh
 
-    def publish_markers(self, hands: list, header, roi):
-        """Publish visualization markers."""
+            # Convert ROI from source-image coordinates into the 960x960 crop coordinates.
+            roi_x = float(roi_x) - self.source_crop_origin_x
+            roi_y = float(roi_y) - self.source_crop_origin_y
+
+            # Clamp ROI into the crop bounds to avoid runaway values when the upstream crop is near edges.
+            roi_w = max(1.0, min(float(roi_w), self.source_crop_size))
+            roi_h = max(1.0, min(float(roi_h), self.source_crop_size))
+            roi_x = max(0.0, min(float(roi_x), self.source_crop_size - roi_w))
+            roi_y = max(0.0, min(float(roi_y), self.source_crop_size - roi_h))
+
+            x_px = roi_x + nx * roi_w
+            y_px = roi_y + ny * roi_h
+
+        x_out = (x_px / self.source_crop_size) * 2.0 - 1.0
+        y_out = (y_px / self.source_crop_size) * 2.0 - 1.0
+        x_out = max(-1.0, min(1.0, x_out))
+        y_out = max(-1.0, min(1.0, y_out))
+        return x_out, y_out
+
+    def publish_keypoints(self, kpts, roi_xywh: Optional[Tuple[float, float, float, float]] = None):
         marker_array = MarkerArray()
-        
-        # Delete previous markers
-        delete_marker = Marker()
-        delete_marker.header = header
-        delete_marker.header.frame_id = self.frame_id
-        delete_marker.action = Marker.DELETEALL
-        marker_array.markers.append(delete_marker)
-        
-        for hand_idx, hand in enumerate(hands):
-            keypoints = hand['keypoints']
-            confidence = hand['confidence']
-            
-            joints_marker = self.create_joints_marker(
-                keypoints, hand_idx, header, confidence, roi
-            )
-            marker_array.markers.append(joints_marker)
+
+        for i, (x, y, v) in enumerate(kpts):
+            x_out, y_out = self._kpt_to_crop_norm(x, y, roi_xywh)
+            marker = Marker()
+            marker.header.frame_id = "theta_camera"
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "hand_keypoints"
+            marker.id = i
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.scale.x = 0.02
+            marker.scale.y = 0.02
+            marker.scale.z = 0.02
+            marker.pose.position.x = float(x_out)
+            marker.pose.position.y = float(y_out)
+            marker.pose.position.z = 0.0
+            marker.pose.orientation.w = 1.0
+            marker.color.r = 0.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+            marker.color.a = 1.0
+            marker_array.markers.append(marker)
         
         self.marker_pub.publish(marker_array)
 
-    def create_joints_marker(
-        self, keypoints: np.ndarray, hand_idx: int, header, confidence: float, roi
-    ) -> Marker:
-        """Create Marker for hand keypoints."""
-        marker = Marker()
-        marker.header = header
-        marker.header.frame_id = self.frame_id
-        marker.ns = 'hand_keypoints'
-        marker.id = hand_idx
-        marker.type = Marker.POINTS
-        marker.action = Marker.ADD
-        
-        # Point size
-        marker.scale.x = 0.02
-        marker.scale.y = 0.02
-        
-        # Base DNN crop dimension
-        dnn_dim = 224.0
-        
-        for kp_idx, kp in enumerate(keypoints):
-            x_val = float(kp[0])
-            y_val = float(kp[1])
-            z_val = float(kp[2]) if len(kp) > 2 else 0.0
-            
-            pct_x = x_val
-            pct_y = y_val
-            pct_z = z_val
-            
-            # The model often outputs literal [0, 224] pixel coordinates!
-            if abs(x_val) > 1.0 or abs(y_val) > 1.0:
-                pct_x /= dnn_dim
-                pct_y /= dnn_dim
-                pct_z /= dnn_dim
-            
-            if roi is not None:
-                # Calculate absolute pixel coordinates relative to the full image
-                abs_x = roi.x_offset + pct_x * roi.width
-                abs_y = roi.y_offset + pct_y * roi.height
-                
-                # Transform directly into a [-1, 1] space where 0,0 is the center of the total image
-                x_val = (abs_x / self.image_width) * 2.0 - 1.0
-                y_val = (abs_y / self.image_height) * 2.0 - 1.0
-                
-                # Scale Z equivalently to maintain spatial proportions
-                z_val = pct_z * (roi.width / self.image_width)
-            else:
-                x_val = pct_x * 2.0 - 1.0
-                y_val = pct_y * 2.0 - 1.0
-                z_val = pct_z
-            
-            # Z offset
-            z_offset = 1.0
-            point = Point(x=x_val, y=y_val, z=z_val + z_offset)
-            marker.points.append(point)
-            
-            # Color by finger
-            color = self._get_finger_color(kp_idx)
-            marker.colors.append(color)
-        
-        return marker
-
-    def _get_finger_color(self, kp_idx: int) -> ColorRGBA:
-        """Return color for finger index."""
-        if kp_idx == 0:
-            return ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
-        elif 1 <= kp_idx <= 4:
-            return ColorRGBA(r=1.0, g=0.2, b=0.2, a=1.0)
-        elif 5 <= kp_idx <= 8:
-            return ColorRGBA(r=1.0, g=0.6, b=0.0, a=1.0)
-        elif 9 <= kp_idx <= 12:
-            return ColorRGBA(r=1.0, g=1.0, b=0.0, a=1.0)
-        elif 13 <= kp_idx <= 16:
-            return ColorRGBA(r=0.0, g=1.0, b=0.4, a=1.0)
-        else:
-            return ColorRGBA(r=0.4, g=0.6, b=1.0, a=1.0)
-
+        # Overlay markers on image and show in OpenCV window
+        # if self.current_image is not None:
+        #     img = self.current_image.copy()
+        #     for i, (x, y, v) in enumerate(kpts):
+        #         # Optionally skip invisible keypoints
+        #         # if v < 0.5:
+        #         #     continue
+        #         cx = int(float(x))
+        #         cy = int(float(y))
+        #         self.cv2.circle(img, (cx, cy), 6, (0, 255, 0), -1)
+        #     self.cv2.imshow('Hand Keypoints Overlay', img)
+        #     self.cv2.waitKey(1)
 
 def main(args=None):
     rclpy.init(args=args)
@@ -275,7 +220,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

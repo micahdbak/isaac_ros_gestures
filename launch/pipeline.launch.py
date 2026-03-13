@@ -15,13 +15,13 @@ def generate_launch_description():
     # Launch arguments
     model_file_path_arg = DeclareLaunchArgument(
         'model_file_path',
-        default_value='/workspaces/isaac_ros-dev/models/handpose_nchw.onnx',
+        default_value='/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26s-pose-hands.onnx',
         description='Path to the ONNX model file'
     )
 
     engine_file_path_arg = DeclareLaunchArgument(
         'engine_file_path',
-        default_value='/workspaces/isaac_ros-dev/models/handpose_nchw.plan',
+        default_value='/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26s-pose-hands.plan',
         description='Path to the TensorRT engine file'
     )
 
@@ -38,31 +38,31 @@ def generate_launch_description():
     )
     
     # Theta camera source
-    # theta_src_node = Node(
-    #     package='isaac_ros_gestures',
-    #     executable='theta_uvc_src',
-    #     name='theta_uvc_src',
-    #     parameters=[{
-    #         'width': 1920,
-    #         'height': 960,
-    #         'frame_id': 'theta_camera',
-    #     }],
-    #     output='screen',
-    # )
+    theta_src_node = Node(
+         package='isaac_ros_gestures',
+         executable='theta_uvc_src',
+         name='theta_uvc_src',
+         parameters=[{
+             'width': 1920,
+             'height': 960,
+             'frame_id': 'theta_camera',
+        }],
+         output='screen',
+     )
     
     # Video file test source (hot-swappable with theta_src_node)
-    video_tester_node = Node(
-        package='isaac_ros_gestures',
-        executable='video_tester_node',
-        name='video_tester_node',
-        parameters=[{
-            'width': 1920,
-            'height': 960,
-            'frame_id': 'theta_camera',
-            'video_path': '/workspaces/isaac_ros-dev/test_video.mp4',
-        }],
-        output='screen',
-    )
+    # video_tester_node = Node(
+    #    package='isaac_ros_gestures',
+    #    executable='video_tester_node',
+    #    name='video_tester_node',
+    #    parameters=[{
+    #        'width': 1920,
+    #        'height': 960,
+    #        'frame_id': 'theta_camera',
+    #        'video_path': '/workspaces/isaac_ros-dev/test_video.mp4',
+    #    }],
+    #    output='screen',
+    #)
     
     # Palm Detector (Mid-step for cropping)
     palm_detector_node = Node(
@@ -89,14 +89,13 @@ def generate_launch_description():
             ('encoded_tensor', '/tensor_view'),
         ],
         parameters=[{
-            'input_image_width': 224,
-            'input_image_height': 224,
-            'network_image_width': 224,
-            'network_image_height': 224,
-            'image_mean': [0.5, 0.5, 0.5],
-            'image_stddev': [0.5, 0.5, 0.5],
-            'num_blocks': 40,
-            'enable_padding': False,
+            'input_image_width': 640,
+            'input_image_height': 640,
+            'network_image_width': 640,
+            'network_image_height': 640,
+            'image_mean': [0.0, 0.0, 0.0],
+            'image_stddev': [1.0, 1.0, 1.0],
+            'enable_padding': True,
         }]
     )
     
@@ -112,10 +111,10 @@ def generate_launch_description():
         parameters=[{
             'model_file_path': LaunchConfiguration('model_file_path'),
             'engine_file_path': LaunchConfiguration('engine_file_path'),
-            'input_binding_names': ['input_tensor'],
+            'input_binding_names': ['images'],
             'input_tensor_names': ['input_tensor'],
-            'output_binding_names': ['Identity', 'Identity_1', 'Identity_2', 'Identity_3'],
-            'output_tensor_names': ['landmarks', 'handedness', 'score', 'hand_presence'],
+            'output_binding_names': ['output0'],
+            'output_tensor_names': ['tensor_output'],
             'force_engine_update': False,
             'verbose': True,
         }]
@@ -162,8 +161,8 @@ def generate_launch_description():
         score_threshold_arg,
         
         # Uncomment video_tester_node and comment theta_src_node to swap
-        # theta_src_node,
-        video_tester_node,
+        theta_src_node,
+        # video_tester_node,
         
         palm_detector_node,
         inference_container,
