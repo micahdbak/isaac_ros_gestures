@@ -17,7 +17,7 @@ ros2 launch isaac_ros_gestures pipeline.launch.py
 ### Key Files & Components
 - **`pipeline.launch.py`**: The primary launch configuration. It orchestrates the entire ROS 2 computational graph, injecting TensorRT nodes, managing remappings, and setting up the static TF for RViz visualization.
 - **`theta_uvc_src.py`**: A specialized camera node connecting to the Ricoh Theta via GStreamer/UVC, extracting and publishing high-resolution uncompressed images.
-- **`video_tester_node.py`**: A debugging node that can be hot-swapped for the live camera. It reads a local MP4 file and plays it back identically to the live stream.
+- **`video_collector_node.py`**: A video-folder source/collector node that iterates through `.mp4` files, publishes frames to the pipeline, subscribes to `/pose_markers`, and writes fixed-length per-video CSV keypose arrays.
 - **`palm_detector_node.py` / `mp_palmdet.py`**: An intermediate CPU-based node that runs a lightweight MediaPipe ONNX model to perform inference on the entire image. It locates the largest palm, generates a heavily padded bounding box, and creates a 224x224 crop.
 - **`handpose_decoder.py`**: A parser node that translates the raw output tensors of the TensorRT keypoint model into fully scaled, 3D color-coded arrays ready to be drawn in RViz.
 

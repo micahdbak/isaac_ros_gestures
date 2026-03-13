@@ -25,7 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'theta_uvc_src = isaac_ros_gestures.theta_uvc_src:main',
-            'video_tester_node = isaac_ros_gestures.video_tester_node:main',
+            'video_collector_node = isaac_ros_gestures.video_collector_node:main',
             'palm_detector_node = isaac_ros_gestures.palm_detector_node:main',
             'handpose_decoder = isaac_ros_gestures.handpose_decoder:main',
         ],

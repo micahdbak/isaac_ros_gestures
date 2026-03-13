@@ -7,7 +7,6 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-
     theta_src_node = Node(
         package='isaac_ros_gestures',
         executable='theta_uvc_src',

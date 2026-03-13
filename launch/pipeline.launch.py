@@ -38,31 +38,32 @@ def generate_launch_description():
     )
     
     # Theta camera source
-    theta_src_node = Node(
-         package='isaac_ros_gestures',
-         executable='theta_uvc_src',
-         name='theta_uvc_src',
-         parameters=[{
-             'width': 1920,
-             'height': 960,
-             'frame_id': 'theta_camera',
-        }],
-         output='screen',
-     )
-    
-    # Video file test source (hot-swappable with theta_src_node)
-    # video_tester_node = Node(
-    #    package='isaac_ros_gestures',
-    #    executable='video_tester_node',
-    #    name='video_tester_node',
-    #    parameters=[{
-    #        'width': 1920,
-    #        'height': 960,
-    #        'frame_id': 'theta_camera',
-    #        'video_path': '/workspaces/isaac_ros-dev/test_video.mp4',
+    #theta_src_node = Node(
+    #     package='isaac_ros_gestures',
+    #     executable='theta_uvc_src',
+    #     name='theta_uvc_src',
+    #     parameters=[{
+    #         'width': 1920,
+    #         'height': 960,
+    #         'frame_id': 'theta_camera',
     #    }],
-    #    output='screen',
+    #     output='screen',
     #)
+    
+    # Video folder source/collector (hot-swappable with theta_src_node)
+    video_collector_node = Node(
+        package='isaac_ros_gestures',
+        executable='video_collector_node',
+        name='video_collector_node',
+        parameters=[{
+            'width': 1920,
+            'height': 960,
+            'frame_id': 'theta_camera',
+            'video_dir': '/workspaces/isaac_ros-dev/recordings/right',
+            'output_dir': '/workspaces/isaac_ros-dev/training/right',
+        }],
+        output='screen',
+    )
     
     # Palm Detector (Mid-step for cropping)
     palm_detector_node = Node(
@@ -160,9 +161,9 @@ def generate_launch_description():
         palm_model_file_path_arg,
         score_threshold_arg,
         
-        # Uncomment video_tester_node and comment theta_src_node to swap
-        theta_src_node,
-        # video_tester_node,
+        # Uncomment video_collector_node and comment theta_src_node to swap
+        #theta_src_node,
+        video_collector_node,
         
         palm_detector_node,
         inference_container,
