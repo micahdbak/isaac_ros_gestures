@@ -25,12 +25,6 @@ def generate_launch_description():
         description='Path to the TensorRT engine file'
     )
 
-    palm_model_file_path_arg = DeclareLaunchArgument(
-        'palm_model_file_path',
-        default_value='/workspaces/isaac_ros-dev/src/isaac_ros_gestures/palm_detection_mediapipe_2023feb.onnx',
-        description='Path to the Palm Detection ONNX model file'
-    )
-    
     score_threshold_arg = DeclareLaunchArgument(
         'score_threshold',
         default_value='0.05',
@@ -38,48 +32,100 @@ def generate_launch_description():
     )
     
     # Theta camera source
-    #theta_src_node = Node(
-    #     package='isaac_ros_gestures',
-    #     executable='theta_uvc_src',
-    #     name='theta_uvc_src',
-    #     parameters=[{
-    #         'width': 1920,
-    #         'height': 960,
-    #         'frame_id': 'theta_camera',
-    #    }],
-    #     output='screen',
-    #)
+    theta_src_node = Node(
+         package='isaac_ros_gestures',
+         executable='theta_uvc_src',
+         name='theta_uvc_src',
+         parameters=[{
+             'width': 1920,
+             'height': 960,
+             'frame_id': 'theta_camera',
+        }],
+         output='screen',
+    )
     
     # Video folder source/collector (hot-swappable with theta_src_node)
-    video_collector_node = Node(
-        package='isaac_ros_gestures',
-        executable='video_collector_node',
-        name='video_collector_node',
+    #video_collector_node = Node(
+    #    package='isaac_ros_gestures',
+    #    executable='video_collector_node',
+    #    name='video_collector_node',
+    #    parameters=[{
+    #        'width': 1920,
+    #        'height': 960,
+    #        'frame_id': 'theta_camera',
+    #        'video_dir': '/workspaces/isaac_ros-dev/recordings/right',
+    #        'output_dir': '/workspaces/isaac_ros-dev/training/right',
+    #    }],
+    #    output='screen',
+    #)
+    
+    # --- Full-frame hand detector (YOLO26 TensorRT) -> handbox_decoder -> /image_cropped ---
+    handdet_encoder_node = ComposableNode(
+        name='dnn_image_encoder_handdet',
+        package='isaac_ros_dnn_image_encoder',
+        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
+        remappings=[
+            ('image', '/image_raw'),
+            ('encoded_tensor', '/tensor_view_handdet'),
+        ],
         parameters=[{
-            'width': 1920,
-            'height': 960,
-            'frame_id': 'theta_camera',
-            'video_dir': '/workspaces/isaac_ros-dev/recordings/right',
-            'output_dir': '/workspaces/isaac_ros-dev/training/right',
+            'input_image_width': 640,
+            'input_image_height': 640,
+            'network_image_width': 640,
+            'network_image_height': 640,
+            'image_mean': [0.0, 0.0, 0.0],
+            'image_stddev': [1.0, 1.0, 1.0],
+            'enable_padding': True,
+        }]
+    )
+
+    handdet_tensorrt_node = ComposableNode(
+        name='tensorrt_node_handdet',
+        package='isaac_ros_tensor_rt',
+        plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
+        remappings=[
+            ('tensor_pub', '/tensor_view_handdet'),
+            ('tensor_sub', '/tensor_output_handdet'),
+        ],
+        parameters=[{
+            'model_file_path': LaunchConfiguration('model_file_path'),
+            'engine_file_path': LaunchConfiguration('engine_file_path'),
+            'input_binding_names': ['images'],
+            'input_tensor_names': ['input_tensor'],
+            'output_binding_names': ['output0'],
+            'output_tensor_names': ['tensor_output'],
+            'force_engine_update': False,
+            'verbose': True,
+        }]
+    )
+
+    handdet_container = ComposableNodeContainer(
+        name='handdet_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container_mt',
+        composable_node_descriptions=[handdet_encoder_node, handdet_tensorrt_node],
+        output='screen',
+    )
+
+    handbox_decoder_node = Node(
+        package='isaac_ros_gestures',
+        executable='handbox_decoder',
+        name='handbox_decoder',
+        remappings=[
+            ('image_raw', '/image_raw'),
+            ('tensor_output_handdet', '/tensor_output_handdet'),
+            ('image_cropped', '/image_cropped'),
+        ],
+        parameters=[{
+            'score_threshold': LaunchConfiguration('score_threshold'),
+            'network_size': 640.0,
+            'padding_ratio': 2.0,
         }],
         output='screen',
     )
     
-    # Palm Detector (Mid-step for cropping)
-    palm_detector_node = Node(
-        package='isaac_ros_gestures',
-        executable='palm_detector_node',
-        name='palm_detector_node',
-        remappings=[
-            ('image_raw', '/image_raw'),
-            ('image_cropped', '/image_cropped'),
-        ],
-        parameters=[{
-            'model_path': LaunchConfiguration('palm_model_file_path'),
-        }],
-        output='screen'
-    )
-    
+    # --- Original /image_cropped -> TensorRT -> handpose_decoder pipeline ---
     # DNN Image Encoder
     encoder_node = ComposableNode(
         name='dnn_image_encoder',
@@ -141,7 +187,6 @@ def generate_launch_description():
         ],
         parameters=[{
             'score_threshold': LaunchConfiguration('score_threshold'),
-            'frame_id': 'theta_camera',
         }],
         output='screen',
     )
@@ -158,14 +203,14 @@ def generate_launch_description():
     return LaunchDescription([
         model_file_path_arg,
         engine_file_path_arg,
-        palm_model_file_path_arg,
         score_threshold_arg,
         
         # Uncomment video_collector_node and comment theta_src_node to swap
-        #theta_src_node,
-        video_collector_node,
+        theta_src_node,
+        #video_collector_node,
         
-        palm_detector_node,
+        handdet_container,
+        handbox_decoder_node,
         inference_container,
         decoder_node,
         static_tf_node
