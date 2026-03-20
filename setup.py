@@ -27,7 +27,10 @@ setup(
             'theta_uvc_src = isaac_ros_gestures.theta_uvc_src:main',
             'video_collector_node = isaac_ros_gestures.video_collector_node:main',
             'handbox_decoder = isaac_ros_gestures.handbox_decoder:main',
+            'handbox_tensor_view_viz = isaac_ros_gestures.handbox_tensor_view_viz:main',
             'handpose_decoder = isaac_ros_gestures.handpose_decoder:main',
+            'full_body_pose_decoder = isaac_ros_gestures.full_body_pose_decoder:main',
+            'image_gate = isaac_ros_gestures.image_gate:main',
         ],
     },
 )
