@@ -11,7 +11,8 @@ from cv_bridge import CvBridge
 from isaac_ros_tensor_list_interfaces.msg import TensorList
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
-
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
 
 class FullBodyPoseDecoder(Node):
     def __init__(self):
@@ -21,6 +22,7 @@ class FullBodyPoseDecoder(Node):
         self.declare_parameter('tensor_topic', 'tensor_output_handbox')
         self.declare_parameter('cropped_topic', 'image_cropped')
         self.declare_parameter('roi_topic', 'image_roi')
+        self.declare_parameter('marker_topic', 'fullbody_pose_markers')
 
         self.declare_parameter('score_threshold', 0.10)
         self.declare_parameter('keypoint_threshold', 0.10)
@@ -39,11 +41,11 @@ class FullBodyPoseDecoder(Node):
         self.declare_parameter('right_wrist_kpt_index', 10)
 
         # Visualization
-        self.declare_parameter('show_visualization', True)
+        self.declare_parameter('show_visualization', False)
         self.declare_parameter('vis_window_name', 'full_body_pose_overlay')
         self.declare_parameter('max_center_jump_px', 120.0)
 
-
+        self.marker_topic = str(self.get_parameter('marker_topic').value)
         self.max_center_jump_px = float(self.get_parameter('max_center_jump_px').value)
         self.image_topic = str(self.get_parameter('image_topic').value)
         self.tensor_topic = str(self.get_parameter('tensor_topic').value)
@@ -78,6 +80,7 @@ class FullBodyPoseDecoder(Node):
 
         self.image_pub = self.create_publisher(Image, self.cropped_topic, 10)
         self.roi_pub = self.create_publisher(CameraInfo, self.roi_topic, 10)
+        self.marker_pub = self.create_publisher(MarkerArray, self.marker_topic, 10)
 
         # COCO-17 skeleton connections
         self.skeleton_edges = [
@@ -115,7 +118,7 @@ class FullBodyPoseDecoder(Node):
     def tensor_callback(self, msg: TensorList) -> None:
         if self.last_image is None or self.last_image_msg is None:
             return
-
+        published_markers = False
         src_img = self.last_image
         src_msg = self.last_image_msg
         src_h, src_w = src_img.shape[:2]
@@ -202,7 +205,13 @@ class FullBodyPoseDecoder(Node):
                         src_h=src_h,
                         model_size=self.model_size,
                     )
-
+                    self.publish_pose_markers(
+                        kpts=best_kpts_src,
+                        stamp=src_msg.header.stamp,
+                        frame_id=src_msg.header.frame_id,
+                        kpt_threshold=self.keypoint_threshold,
+                    )
+                    published_markers = True
                     bbox_center_src = (bbox_center_x_src, bbox_center_y_src)
                     accepted_bbox_center_src = bbox_center_src
                     wrist_point_src = (wrist_x_src, wrist_y_src)
@@ -216,18 +225,22 @@ class FullBodyPoseDecoder(Node):
                         src_h=src_h,
                     )
 
-                    self.get_logger().info(
-                        f'Accepted candidate idx={int(idx)} '
-                        f'conf={det_conf:.3f} '
-                        f'bbox_center=({bbox_center_x_src:.1f}, {bbox_center_y_src:.1f}) '
-                        f'wrist=({wrist_x_src:.1f}, {wrist_y_src:.1f})'
-                    )
+                    #self.get_logger().info(
+                    #    f'Accepted candidate idx={int(idx)} '
+                    #    f'conf={det_conf:.3f} '
+                    #    f'bbox_center=({bbox_center_x_src:.1f}, {bbox_center_y_src:.1f}) '
+                    #    f'wrist=({wrist_x_src:.1f}, {wrist_y_src:.1f})'
+                    #)
                     break
 
         # Fallback to previous crop box if current detection is unusable
         if crop_box is None:
             crop_box = self.last_crop_box
-
+        if not published_markers:
+            self.clear_pose_markers(
+                stamp=src_msg.header.stamp,
+                frame_id=src_msg.header.frame_id,
+            )
         # Visualization
         if self.show_visualization:
             vis = src_img.copy()
@@ -680,8 +693,68 @@ class FullBodyPoseDecoder(Node):
             except Exception:
                 pass
         super().destroy_node()
+    def publish_pose_markers(
+        self,
+        kpts: np.ndarray,
+        stamp,
+        frame_id: str,
+        kpt_threshold: float,
+    ) -> None:
+        """
+        Publish full body pose as a single Marker containing all landmark points
+        in fixed order. Low-confidence points are stored as (-1, -1, 0).
+        """
 
+        marker_array = MarkerArray()
 
+        marker = Marker()
+        marker.header.stamp = stamp
+        marker.header.frame_id = frame_id
+        marker.ns = 'fullbody_keypoints'
+        marker.id = 0
+        marker.type = Marker.POINTS
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 8.0
+        marker.scale.y = 8.0
+        marker.color.r = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+
+        for idx in range(kpts.shape[0]):
+            x, y, conf = kpts[idx]
+
+            if conf < kpt_threshold:
+                p = self.make_marker_point(-1.0, -1.0, 0.0)
+            else:
+                p = self.make_marker_point(float(x), float(y), 0.0)
+
+            marker.points.append(p)
+
+        marker_array.markers.append(marker)
+        self.marker_pub.publish(marker_array)
+    def clear_pose_markers(
+        self,
+        stamp,
+        frame_id: str,
+    ) -> None:
+        marker_array = MarkerArray()
+
+        m = Marker()
+        m.header.stamp = stamp
+        m.header.frame_id = frame_id
+        m.action = Marker.DELETEALL
+
+        marker_array.markers.append(m)
+        self.marker_pub.publish(marker_array)
+    
+    def make_marker_point(self, x: float, y: float, z: float = 0.0) -> Point:
+        p = Point()
+        p.x = x
+        p.y = y
+        p.z = z
+        return p
 def main(args=None):
     rclpy.init(args=args)
     node = FullBodyPoseDecoder()

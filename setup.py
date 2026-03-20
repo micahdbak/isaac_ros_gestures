@@ -31,6 +31,8 @@ setup(
             'handpose_decoder = isaac_ros_gestures.handpose_decoder:main',
             'full_body_pose_decoder = isaac_ros_gestures.full_body_pose_decoder:main',
             'image_gate = isaac_ros_gestures.image_gate:main',
+            'session_collector_node = isaac_ros_gestures.session_collector_node:main',
+
         ],
     },
 )

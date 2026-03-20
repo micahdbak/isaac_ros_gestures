@@ -178,7 +178,20 @@ def generate_launch_description():
         ],
         output='screen',
     )
-
+    session_collector_node = Node(
+        package='isaac_ros_gestures',
+        executable='session_collector_node',
+        name='session_collector_node',
+        parameters=[{
+            'button_topic': '/arduino_buttons',
+            'marker_topic': '/pose_markers',
+            'image_topic': '/image_cropped',
+            'save_dir': '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/data/go',
+            'video_fps': 20.0,
+            'video_codec': 'mp4v',
+        }],
+        output='screen',
+    )
     return LaunchDescription([
         inference_container,
         image_gate_node,
@@ -187,4 +200,5 @@ def generate_launch_description():
         full_body_pose_decoder_node,
         #handbox_tensor_view_viz_node,
         handpose_decoder_node,
+        session_collector_node,
     ])
