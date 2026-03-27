@@ -32,6 +32,9 @@ setup(
             'full_body_pose_decoder = isaac_ros_gestures.full_body_pose_decoder:main',
             'image_gate = isaac_ros_gestures.image_gate:main',
             'session_collector_node = isaac_ros_gestures.session_collector_node:main',
+            'classifier_collector_node = isaac_ros_gestures.classifier_collector_node:main',
+            'classifier_output_decoder = isaac_ros_gestures.classifier_output_decoder:main',
+
 
         ],
     },

@@ -14,7 +14,9 @@ def generate_launch_description():
     hand_model_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26s-pose-hands.onnx'
     bbox_engine_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26n-pose-fullbody.plan'
     hand_engine_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26s-pose-hands.plan'
-    
+    classifier_model_file_path= '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/hand_classifier.onnx'
+    classifier_engine_file_path= '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/hand_classifier.plan'
+
     # Theta camera source
     theta_src_node = Node(
         package='isaac_ros_gestures',
@@ -148,13 +150,31 @@ def generate_launch_description():
             'verbose': True,
         }]
     )
-    
+    classifier_tensorrt_node = ComposableNode(
+        name='classifier_tensorrt_node',
+        package='isaac_ros_tensor_rt',
+        plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
+        remappings=[
+            ('tensor_pub', '/gesture_input_tensor'),
+            ('tensor_sub', '/classifier_tensor_output'),
+        ],
+        parameters=[{
+            'model_file_path': classifier_model_file_path,
+            'engine_file_path': classifier_engine_file_path,
+            'input_binding_names': ['body', 'hand'],
+            'input_tensor_names': ['body', 'hand'],
+            'output_binding_names': ['logits'],
+            'output_tensor_names': ['logits'],
+            'force_engine_update': False,
+            'verbose': True,
+        }]
+    )
     inference_container = ComposableNodeContainer(
         name='inference_container',
         namespace='',
         package='rclcpp_components',
         executable='component_container_mt',
-        composable_node_descriptions=[handbox_encoder_node, handbox_tensorrt_node, encoder_node, tensorrt_node],
+        composable_node_descriptions=[handbox_encoder_node, handbox_tensorrt_node, encoder_node, tensorrt_node,classifier_tensorrt_node],
         output='screen',
     )
     
@@ -186,19 +206,52 @@ def generate_launch_description():
             'button_topic': '/arduino_buttons',
             'marker_topic': '/pose_markers',
             'image_topic': '/image_cropped',
-            'save_dir': '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/data/go',
+            'save_dir': '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/data_27/null',
             'video_fps': 20.0,
             'video_codec': 'mp4v',
         }],
         output='screen',
     )
+    classifier_collector_node = Node(
+        package='isaac_ros_gestures',
+        executable='classifier_collector_node',
+        name='classifier_collector_node',
+        parameters=[{
+            'button_topic': '/arduino_buttons',
+            'hand_marker_topic': '/pose_markers',
+            'body_marker_topic': '/fullbody_pose_markers',
+            'tensor_topic': '/gesture_input_tensor',
+            'sequence_length': 64,
+            'hand_landmarks': 21,
+            'body_landmarks': 8,
+
+            # IMPORTANT:
+            # replace with the exact 8 body keypoint indices used during training
+            'body_indices': [5, 6, 8, 10,11,12],
+        }],
+        output='screen',
+    )
+
+    # NEW: decoder node for classifier output
+    classifier_output_decoder_node = Node(
+        package='isaac_ros_gestures',
+        executable='classifier_output_decoder',
+        name='classifier_output_decoder',
+        parameters=[{
+            'input_topic': '/classifier_tensor_output',
+            'output_topic': '/classifier_output',
+        }],
+        output='screen',
+    )
+
     return LaunchDescription([
         inference_container,
         image_gate_node,
-        #theta_src_node,
-        #video_collector_node,
+        # theta_src_node,
+        # video_collector_node,
         full_body_pose_decoder_node,
-        #handbox_tensor_view_viz_node,
         handpose_decoder_node,
         session_collector_node,
+        #classifier_collector_node,
+        #classifier_output_decoder_node,
     ])

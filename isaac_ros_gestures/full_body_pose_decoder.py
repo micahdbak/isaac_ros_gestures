@@ -41,7 +41,7 @@ class FullBodyPoseDecoder(Node):
         self.declare_parameter('right_wrist_kpt_index', 10)
 
         # Visualization
-        self.declare_parameter('show_visualization', False)
+        self.declare_parameter('show_visualization', True)
         self.declare_parameter('vis_window_name', 'full_body_pose_overlay')
         self.declare_parameter('max_center_jump_px', 120.0)
 
@@ -570,6 +570,8 @@ class FullBodyPoseDecoder(Node):
 
         # draw keypoints
         for idx in range(num_kpts):
+            if idx not in [5,6,8,10,11 ,12]:
+                continue
             x, y, c = kpts[idx]
             if c < kpt_threshold:
                 continue

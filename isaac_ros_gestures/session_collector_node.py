@@ -50,7 +50,7 @@ class SessionCollectorNode(Node):
         self._body_frames: List[np.ndarray] = []
         self._expected_hand_landmarks: Optional[int] = None
         self._expected_body_landmarks: Optional[int] = None
-
+        self._failed=False
         self.button_sub = self.create_subscription(
             String, self.button_topic, self.button_callback, 10
         )
@@ -128,6 +128,7 @@ class SessionCollectorNode(Node):
 
         if len(frames) == 0:
             arr = np.empty((0, 0, dims), dtype=np.float32)
+            self._failed=True
         else:
             arr = np.stack(frames, axis=0).astype(np.float32)
 
@@ -163,7 +164,6 @@ class SessionCollectorNode(Node):
         if not self._recording:
             self.get_logger().warn('Button 1 released but no session is recording.')
             return
-
         try:
             self._save_array(self._current_hand_path, self._hand_frames, dims=2)
             self._save_array(self._current_body_path, self._body_frames, dims=2)
@@ -212,6 +212,11 @@ class SessionCollectorNode(Node):
             self.start_session()
         elif data == 'button_1_released':
             self.stop_session()
+            if self._failed==True:
+                self.get_logger().warn("last session collected nothing, deleted")
+                self.delete_last_session()
+                self._failed=False
+
         elif data == 'button_2_pressed':
             self.delete_last_session()
 
@@ -233,6 +238,7 @@ class SessionCollectorNode(Node):
                 f'Skipping hand frame with {frame_array.shape[0]} landmarks; '
                 f'expected {self._expected_hand_landmarks}.'
             )
+            
             return
 
         self._hand_frames.append(frame_array)
@@ -255,6 +261,8 @@ class SessionCollectorNode(Node):
                 f'Skipping body frame with {frame_array.shape[0]} landmarks; '
                 f'expected {self._expected_body_landmarks}.'
             )
+            
+
             return
 
         self._body_frames.append(frame_array)

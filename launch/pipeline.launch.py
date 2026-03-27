@@ -10,9 +10,10 @@ from launch_ros.descriptions import ComposableNode
 def generate_launch_description():
     """Generate launch description."""
     
-    model_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26l-pose-hand.onnx'
-    engine_file_path1 = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26l-pose-hand.plan'
-    engine_file_path2 = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26l-pose-hand2.plan'
+    bbox_model_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/pretrained_hand.onnx'
+    hand_model_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26l-pose-hand.onnx'
+    bbox_engine_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/pretrained_hand.plan'
+    hand_engine_file_path = '/workspaces/isaac_ros-dev/src/isaac_ros_gestures/yolo26l-pose-hand.plan'
     
     # Theta camera source
     theta_src_node = Node(
@@ -57,8 +58,8 @@ def generate_launch_description():
             'image_mean': [0.0, 0.0, 0.0],
             'image_stddev': [1.0, 1.0, 1.0],
             'enable_padding': False,
-            'keep_aspect_ratio': True,
-            'crop_mode': 'CENTER',
+            'keep_aspect_ratio': False,
+            #'crop_mode': 'CENTER',
         }]
     )
 
@@ -72,8 +73,8 @@ def generate_launch_description():
             ('tensor_sub', '/tensor_output_handbox'),
         ],
         parameters=[{
-            'model_file_path': model_file_path,
-            'engine_file_path': engine_file_path1,
+            'model_file_path': bbox_model_file_path,
+            'engine_file_path': bbox_engine_file_path,
             'input_binding_names': ['images'],
             'input_tensor_names': ['input_tensor'],
             'output_binding_names': ['output0'],
@@ -125,8 +126,8 @@ def generate_launch_description():
             ('tensor_sub', '/tensor_output'),
         ],
         parameters=[{
-            'model_file_path': model_file_path,
-            'engine_file_path': engine_file_path2,
+            'model_file_path': hand_model_file_path,
+            'engine_file_path': hand_engine_file_path,
             'input_binding_names': ['images'],
             'input_tensor_names': ['input_tensor'],
             'output_binding_names': ['output0'],
@@ -155,11 +156,23 @@ def generate_launch_description():
         output='screen',
     )
 
+    handbox_tensor_view_viz_node = Node(
+        package='isaac_ros_gestures',
+        executable='handbox_tensor_view_viz',
+        name='handbox_tensor_view_viz',
+        remappings=[
+            ('tensor_view_handbox', '/tensor_view_handbox'),
+            ('handbox_detector_input_image', '/handbox_detector_input_image'),
+        ],
+        output='screen',
+    )
+
     return LaunchDescription([
         inference_container,
 
-        #theta_src_node,
-        video_collector_node,
+        theta_src_node,
+        #video_collector_node,
         handbox_decoder_node,
+        #handbox_tensor_view_viz_node,
         handpose_decoder_node,
     ])
